@@ -30,6 +30,19 @@
 
 #include "blackbox_fielddefs.h"
 
+typedef struct xmitState {
+    uint32_t headerIndex;
+
+    /* Since these fields are used during different blackbox states (never simultaneously) we can
+     * overlap them to save on RAM
+     */
+    union {
+        int fieldIndex;
+        uint32_t startTime;
+    } u;
+} xmitState_t;
+
+extern xmitState_t xmitState;
 
 void blackboxLogEvent(FlightLogEvent event, flightLogEventData_t *data);
 

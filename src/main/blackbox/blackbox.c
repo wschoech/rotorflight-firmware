@@ -460,17 +460,7 @@ static uint8_t  blackboxLastGovState = 0;
 static uint8_t  blackboxLastRescueState = 0;
 static uint8_t  blackboxLastAirborneState = 0;
 
-static struct {
-    uint32_t headerIndex;
-
-    /* Since these fields are used during different blackbox states (never simultaneously) we can
-     * overlap them to save on RAM
-     */
-    union {
-        int fieldIndex;
-        uint32_t startTime;
-    } u;
-} xmitState;
+xmitState_t xmitState;
 
 // Cache for FLIGHT_LOG_FIELD_CONDITION_* test results:
 static uint64_t blackboxConditionCache;
