@@ -509,6 +509,12 @@ void blackboxWriteTag8_8SVB(int32_t *values, int valueCount)
     }
 }
 
+void blackboxWriteU16(int16_t value)
+{
+    blackboxWrite(value & 0xFF);
+    blackboxWrite((value >> 8) & 0xFF);
+}
+
 /** Write unsigned integer **/
 void blackboxWriteU32(int32_t value)
 {
