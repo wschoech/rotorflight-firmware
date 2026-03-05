@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <stdbool.h>
+#include <stdint.h>
+
 typedef enum {
     BLACKBOX_RESERVE_SUCCESS,
     BLACKBOX_RESERVE_TEMPORARY_FAILURE,
