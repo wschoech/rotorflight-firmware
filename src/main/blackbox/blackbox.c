@@ -102,6 +102,7 @@
 #define ENCODING_NULL FLIGHT_LOG_FIELD_ENCODING_NULL
 
 static const uint8_t blackboxHeaderMagic[] = {'R', 'T', 'F', 'L', 'B', 'B', 'L'};
+static const uint16_t blackboxDataVersion = 3;
 
 static const char* const blackboxFieldHeaderNames[] = {
     "name",
@@ -2070,11 +2071,19 @@ void blackboxUpdate(timeUs_t currentTimeUs)
          */
         if (millis() > xmitState.u.startTime + 100) {
             if (blackboxDeviceReserveBufferSpace(BLACKBOX_TARGET_HEADER_BUDGET_PER_ITERATION) == BLACKBOX_RESERVE_SUCCESS) {
-                for (int i = 0; i < BLACKBOX_TARGET_HEADER_BUDGET_PER_ITERATION && xmitState.headerIndex != sizeof(blackboxHeaderMagic); i++, xmitState.headerIndex++) {
-                    blackboxWrite(blackboxHeaderMagic[xmitState.headerIndex]);
+                const uint32_t magicSize = sizeof(blackboxHeaderMagic);
+                const uint32_t totalHeaderSize = magicSize + sizeof(blackboxDataVersion);
+
+                for (int i = 0; i < BLACKBOX_TARGET_HEADER_BUDGET_PER_ITERATION && xmitState.headerIndex < totalHeaderSize; i++, xmitState.headerIndex++) {
+                    if (xmitState.headerIndex < magicSize) {
+                        blackboxWrite(blackboxHeaderMagic[xmitState.headerIndex]);
+                    } else {
+                        const uint32_t versionByteIndex = xmitState.headerIndex - magicSize;
+                        blackboxWrite((blackboxDataVersion >> (versionByteIndex * 8)) & 0xFF);
+                    }
                     blackboxHeaderBudget--;
                 }
-                if (xmitState.headerIndex >= sizeof(blackboxHeaderMagic)) {
+                if (xmitState.headerIndex >= totalHeaderSize) {
                     blackboxSetState(BLACKBOX_STATE_SEND_MAIN_FIELD_HEADER);
                 }
             }
