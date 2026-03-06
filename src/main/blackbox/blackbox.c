@@ -101,9 +101,7 @@
 
 #define ENCODING_NULL FLIGHT_LOG_FIELD_ENCODING_NULL
 
-static const char blackboxHeader[] =
-    "H Product:Blackbox flight data recorder by Nicholas Sherlock\n"
-    "H Data version:2\n";
+static const uint8_t blackboxHeaderMagic[] = {'R', 'T', 'F', 'L', 'B', 'B', 'L'};
 
 static const char* const blackboxFieldHeaderNames[] = {
     "name",
@@ -2072,11 +2070,11 @@ void blackboxUpdate(timeUs_t currentTimeUs)
          */
         if (millis() > xmitState.u.startTime + 100) {
             if (blackboxDeviceReserveBufferSpace(BLACKBOX_TARGET_HEADER_BUDGET_PER_ITERATION) == BLACKBOX_RESERVE_SUCCESS) {
-                for (int i = 0; i < BLACKBOX_TARGET_HEADER_BUDGET_PER_ITERATION && blackboxHeader[xmitState.headerIndex] != '\0'; i++, xmitState.headerIndex++) {
-                    blackboxWrite(blackboxHeader[xmitState.headerIndex]);
+                for (int i = 0; i < BLACKBOX_TARGET_HEADER_BUDGET_PER_ITERATION && xmitState.headerIndex != sizeof(blackboxHeaderMagic); i++, xmitState.headerIndex++) {
+                    blackboxWrite(blackboxHeaderMagic[xmitState.headerIndex]);
                     blackboxHeaderBudget--;
                 }
-                if (blackboxHeader[xmitState.headerIndex] == '\0') {
+                if (xmitState.headerIndex >= sizeof(blackboxHeaderMagic)) {
                     blackboxSetState(BLACKBOX_STATE_SEND_MAIN_FIELD_HEADER);
                 }
             }
