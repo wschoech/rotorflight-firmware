@@ -250,8 +250,6 @@ typedef struct flightLogEvent_s {
     flightLogEventData_t data;
 } flightLogEvent_t;
 
-extern const char* const blackboxFieldHeaderNames[];
-
 /* All field definition structs should look like this (but with longer arrs): */
 typedef struct blackboxFieldDefinition_s {
     const char *name;
@@ -261,12 +259,6 @@ typedef struct blackboxFieldDefinition_s {
     // Each member of this array will be the value to print for this field for the given header index
     uint8_t arr[1];
 } blackboxFieldDefinition_t;
-
-typedef enum blackboxFieldHeaderCount_e {
-    BLACKBOX_DELTA_FIELD_HEADER_COUNT = 6,
-    BLACKBOX_SIMPLE_FIELD_HEADER_COUNT = BLACKBOX_DELTA_FIELD_HEADER_COUNT - 2,
-    BLACKBOX_CONDITIONAL_FIELD_HEADER_COUNT = BLACKBOX_DELTA_FIELD_HEADER_COUNT - 2
-} blackboxFieldHeaderCount_e;
 
 typedef struct blackboxSimpleFieldDefinition_s {
     const char *name;

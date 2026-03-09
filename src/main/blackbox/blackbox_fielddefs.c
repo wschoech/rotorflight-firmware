@@ -32,16 +32,6 @@
 
 #define ENCODING_NULL FLIGHT_LOG_FIELD_ENCODING_NULL
 
-const char* const blackboxFieldHeaderNames[] = {
-    "name",
-    "signed",
-    "predictor",
-    "encoding",
-    "predictor",
-    "encoding"
-};
-
-STATIC_ASSERT(ARRAYLEN(blackboxFieldHeaderNames) == BLACKBOX_DELTA_FIELD_HEADER_COUNT, blackbox_field_header_names_count_must_match);
 STATIC_ASSERT(sizeof(blackboxDeltaFieldDefinition_t) <= UINT8_MAX, blackbox_delta_field_definition_stride_fits_in_u8);
 STATIC_ASSERT(sizeof(blackboxConditionalFieldDefinition_t) <= UINT8_MAX, blackbox_conditional_field_definition_stride_fits_in_u8);
 STATIC_ASSERT(sizeof(blackboxSimpleFieldDefinition_t) <= UINT8_MAX, blackbox_simple_field_definition_stride_fits_in_u8);
