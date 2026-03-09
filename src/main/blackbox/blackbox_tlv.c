@@ -18,7 +18,9 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "blackbox.h"
 #include "blackbox_encoding.h"
+#include "blackbox_internal.h"
 #include "blackbox_io.h"
 #include "blackbox_tlv.h"
 

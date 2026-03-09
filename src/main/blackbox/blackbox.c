@@ -29,7 +29,9 @@
 
 #include "blackbox_encoding.h"
 #include "blackbox_fielddefs.h"
+#include "blackbox_internal.h"
 #include "blackbox_io.h"
+#include "blackbox_tlv.h"
 #include "blackbox.h"
 
 #include "build/build_config.h"
@@ -90,254 +92,8 @@
 
 #define BLACKBOX_SHUTDOWN_TIMEOUT_MILLIS 200
 
-// Some macros to make writing FLIGHT_LOG_FIELD_* constants shorter:
-#define PREDICT(x) CONCAT(FLIGHT_LOG_FIELD_PREDICTOR_, x)
-#define ENCODING(x) CONCAT(FLIGHT_LOG_FIELD_ENCODING_, x)
-#define CONDITION(x) CONCAT(FLIGHT_LOG_FIELD_CONDITION_, x)
-#define FIELD_SELECT(x) CONCAT(FLIGHT_LOG_FIELD_SELECT_, x)
-
-#define UNSIGNED FLIGHT_LOG_FIELD_UNSIGNED
-#define SIGNED FLIGHT_LOG_FIELD_SIGNED
-
-#define ENCODING_NULL FLIGHT_LOG_FIELD_ENCODING_NULL
-
 static const uint8_t blackboxHeaderMagic[] = {'R', 'T', 'F', 'L', 'B', 'B', 'L'};
 static const uint16_t blackboxDataVersion = 3;
-
-static const char* const blackboxFieldHeaderNames[] = {
-    "name",
-    "signed",
-    "predictor",
-    "encoding",
-    "predictor",
-    "encoding"
-};
-
-/* All field definition structs should look like this (but with longer arrs): */
-typedef struct blackboxFieldDefinition_s {
-    const char *name;
-    // If the field name has a number to be included in square brackets [1] afterwards, set it here, or -1 for no brackets:
-    int8_t fieldNameIndex;
-
-    // Each member of this array will be the value to print for this field for the given header index
-    uint8_t arr[1];
-} blackboxFieldDefinition_t;
-
-#define BLACKBOX_DELTA_FIELD_HEADER_COUNT       ARRAYLEN(blackboxFieldHeaderNames)
-#define BLACKBOX_SIMPLE_FIELD_HEADER_COUNT      (BLACKBOX_DELTA_FIELD_HEADER_COUNT - 2)
-#define BLACKBOX_CONDITIONAL_FIELD_HEADER_COUNT (BLACKBOX_DELTA_FIELD_HEADER_COUNT - 2)
-
-typedef struct blackboxSimpleFieldDefinition_s {
-    const char *name;
-    int8_t fieldNameIndex;
-
-    uint8_t isSigned;
-    uint8_t predict;
-    uint8_t encode;
-} blackboxSimpleFieldDefinition_t;
-
-typedef struct blackboxConditionalFieldDefinition_s {
-    const char *name;
-    int8_t fieldNameIndex;
-
-    uint8_t isSigned;
-    uint8_t predict;
-    uint8_t encode;
-    uint8_t condition; // Decide whether this field should appear in the log
-} blackboxConditionalFieldDefinition_t;
-
-typedef struct blackboxDeltaFieldDefinition_s {
-    const char *name;
-    int8_t fieldNameIndex;
-
-    uint8_t isSigned;
-    uint8_t Ipredict;
-    uint8_t Iencode;
-    uint8_t Ppredict;
-    uint8_t Pencode;
-    uint8_t condition; // Decide whether this field should appear in the log
-} blackboxDeltaFieldDefinition_t;
-
-/**
- * Description of the blackbox fields we are writing in our main intra (I) and inter (P) frames. This description is
- * written into the flight log header so the log can be properly interpreted (but these definitions don't actually cause
- * the encoding to happen, we have to encode the flight log ourselves in write{Inter|Intra}frame() in a way that matches
- * the encoding we've promised here).
- */
-static const blackboxDeltaFieldDefinition_t blackboxMainFields[] =
-{
-    /* loop iteration doesn't appear in P frames since it always increments */
-    {"loopIteration", -1, UNSIGNED, .Ipredict = PREDICT(0),    .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(INC),           .Pencode = ENCODING_NULL,        CONDITION(ALWAYS)},
-
-    /* Time advances pretty steadily so the P-frame prediction is a straight line */
-    {"time",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(LINEAR),        .Pencode = ENCODING(SIGNED_VB),  CONDITION(ALWAYS)},
-
-    /* RC commands are encoded together as a group in P-frames: */
-    {"rcCommand",   0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(COMMAND)},
-    {"rcCommand",   1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(COMMAND)},
-    {"rcCommand",   2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(COMMAND)},
-    {"rcCommand",   3, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(COMMAND)},
-    {"rcCommand",   4, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(COMMAND)},
-
-    /* setpoint - define 4 fields like RC command */
-    {"setpoint",    0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(SETPOINT)},
-    {"setpoint",    1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(SETPOINT)},
-    {"setpoint",    2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(SETPOINT)},
-    {"setpoint",    3, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(SETPOINT)},
-
-    /* Mixer inputs */
-    {"mixer",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(MIXER)},
-    {"mixer",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(MIXER)},
-    {"mixer",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(MIXER)},
-    {"mixer",       3, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(MIXER)},
-
-    /* PID control terms */
-    {"axisP",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisP",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisP",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisI",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisI",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisI",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisD",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisD",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisD",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisF",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisF",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-    {"axisF",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(PID)},
-
-    /* PID FF Boost terms */
-    {"axisB",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(BOOST)},
-    {"axisB",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(BOOST)},
-    {"axisB",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(BOOST)},
-
-    /* HSI Offset terms */
-    {"axisO",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(HSI)},
-    {"axisO",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(HSI)},
-    {"axisO",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(HSI)},
-
-    /* Attitude Euler angles in 0.1deg steps */
-    {"attitude",    0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(ATTITUDE)},
-    {"attitude",    1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(ATTITUDE)},
-    {"attitude",    2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG2_3S32),  CONDITION(ATTITUDE)},
-
-    /* Gyros and accelerometers base their P-predictions on the average of the previous 2 frames to reduce noise impact */
-    {"gyroRAW",     0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(GYRAW)},
-    {"gyroRAW",     1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(GYRAW)},
-    {"gyroRAW",     2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(GYRAW)},
-
-    {"gyroADC",     0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(GYRO)},
-    {"gyroADC",     1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(GYRO)},
-    {"gyroADC",     2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(GYRO)},
-
-    {"accADC",      0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(ACC)},
-    {"accADC",      1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(ACC)},
-    {"accADC",      2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(ACC)},
-
-#ifdef USE_MAG
-    {"magADC",      0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(MAG)},
-    {"magADC",      1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(MAG)},
-    {"magADC",      2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(MAG)},
-#endif
-
-#ifdef USE_BARO
-    {"altitude",   -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(ALT)},
-#ifdef USE_VARIO
-    {"vario",      -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(ALT)},
-#endif
-#endif
-
-    {"rssi",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(RSSI)},
-
-    {"Vbat",       -1, UNSIGNED, .Ipredict = PREDICT(VBATREF), .Iencode = ENCODING(NEG_14BIT),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(VOLTAGE)},
-    {"Ibat",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(CURRENT)},
-
-    {"Vbec",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(VBEC)},
-    {"Vbus",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(VBUS)},
-
-    {"EscV",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC_TELEM)},
-    {"EscI",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC_TELEM)},
-    {"EscCap",     -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC_TELEM)},
-    {"EscRPM",     -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC_TELEM)},
-    {"EscThr",     -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC_TELEM)},
-    {"EscPwm",     -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC_TELEM)},
-
-    {"BecV",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(BEC_TELEM)},
-    {"BecI",       -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(BEC_TELEM)},
-
-    {"Esc2V",      -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC2_TELEM)},
-    {"Esc2I",      -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC2_TELEM)},
-    {"Esc2Cap",    -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC2_TELEM)},
-    {"Esc2RPM",    -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(ESC2_TELEM)},
-
-    {"Tmcu",       -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(TMCU)},
-    {"Tesc",       -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(TESC)},
-    {"Tbec",       -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(TBEC)},
-    {"Tesc2",      -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB),  CONDITION(TESC2)},
-
-    {"govP",       -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(GOVERNOR)},
-    {"govI",       -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(GOVERNOR)},
-    {"govD",       -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(GOVERNOR)},
-    {"govF",       -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16),  CONDITION(GOVERNOR)},
-    {"govSum",     -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(GOVERNOR)},
-    {"govTarget",  -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(GOVERNOR)},
-    {"govRequest", -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(GOVERNOR)},
-
-    {"headspeed",  -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(HEADSPEED)},
-    {"tailspeed",  -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),  .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(TAILSPEED)},
-
-    {"motor",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(MOTOR_1)},
-    {"motor",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(MOTOR_2)},
-    {"motor",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(MOTOR_3)},
-    {"motor",       3, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(MOTOR_4)},
-
-    {"servo",       0, UNSIGNED, .Ipredict = PREDICT(1500),    .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(SERVO_1)},
-    {"servo",       1, UNSIGNED, .Ipredict = PREDICT(1500),    .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(SERVO_2)},
-    {"servo",       2, UNSIGNED, .Ipredict = PREDICT(1500),    .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(SERVO_3)},
-    {"servo",       3, UNSIGNED, .Ipredict = PREDICT(1500),    .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(SERVO_4)},
-    {"servo",       4, UNSIGNED, .Ipredict = PREDICT(1500),    .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(SERVO_5)},
-    {"servo",       5, UNSIGNED, .Ipredict = PREDICT(1500),    .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(SERVO_6)},
-    {"servo",       6, UNSIGNED, .Ipredict = PREDICT(1500),    .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(SERVO_7)},
-    {"servo",       7, UNSIGNED, .Ipredict = PREDICT(1500),    .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB),  CONDITION(SERVO_8)},
-
-    {"debug",       0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(DEBUG)},
-    {"debug",       1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(DEBUG)},
-    {"debug",       2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(DEBUG)},
-    {"debug",       3, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(DEBUG)},
-    {"debug",       4, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(DEBUG)},
-    {"debug",       5, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(DEBUG)},
-    {"debug",       6, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(DEBUG)},
-    {"debug",       7, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),    .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB),  CONDITION(DEBUG)},
-
-};
-
-#ifdef USE_GPS
-// GPS position/vel frame
-static const blackboxConditionalFieldDefinition_t blackboxGpsGFields[] = {
-    {"time",              -1, UNSIGNED, PREDICT(LAST_MAIN_FRAME_TIME), ENCODING(UNSIGNED_VB), CONDITION(NOT_EVERY_FRAME)},
-    {"GPS_numSat",        -1, UNSIGNED, PREDICT(0),          ENCODING(UNSIGNED_VB), CONDITION(ALWAYS)},
-    {"GPS_coord",          0, SIGNED,   PREDICT(HOME_COORD), ENCODING(SIGNED_VB),   CONDITION(ALWAYS)},
-    {"GPS_coord",          1, SIGNED,   PREDICT(HOME_COORD), ENCODING(SIGNED_VB),   CONDITION(ALWAYS)},
-    {"GPS_altitude",      -1, UNSIGNED, PREDICT(0),          ENCODING(UNSIGNED_VB), CONDITION(ALWAYS)},
-    {"GPS_speed",         -1, UNSIGNED, PREDICT(0),          ENCODING(UNSIGNED_VB), CONDITION(ALWAYS)},
-    {"GPS_ground_course", -1, UNSIGNED, PREDICT(0),          ENCODING(UNSIGNED_VB), CONDITION(ALWAYS)}
-};
-
-// GPS home frame
-static const blackboxSimpleFieldDefinition_t blackboxGpsHFields[] = {
-    {"GPS_home",           0, SIGNED,   PREDICT(0),          ENCODING(SIGNED_VB)},
-    {"GPS_home",           1, SIGNED,   PREDICT(0),          ENCODING(SIGNED_VB)}
-};
-#endif
-
-// Rarely-updated fields
-static const blackboxSimpleFieldDefinition_t blackboxSlowFields[] = {
-    {"flightModeFlags",       -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
-    {"stateFlags",            -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
-
-    {"failsafePhase",         -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)},
-    {"rxSignalReceived",      -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)},
-    {"rxFlightChannelsValid", -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)}
-};
 
 typedef enum BlackboxState {
     BLACKBOX_STATE_DISABLED = 0,
@@ -461,11 +217,6 @@ static uint8_t  blackboxLastAirborneState = 0;
 
 xmitState_t xmitState;
 
-// Cache for FLIGHT_LOG_FIELD_CONDITION_* test results:
-static uint64_t blackboxConditionCache;
-
-STATIC_ASSERT((sizeof(blackboxConditionCache) * 8) >= FLIGHT_LOG_FIELD_CONDITION_COUNT, too_many_flight_log_conditions);
-
 static uint32_t blackboxIteration;
 
 static uint32_t blackboxPInterval = 0;
@@ -514,157 +265,6 @@ static bool blackboxIsLoggingEnabled(void)
 static bool blackboxIsLoggingPaused(void)
 {
     return (blackboxConfig()->mode == BLACKBOX_MODE_NORMAL && !IS_RC_MODE_ACTIVE(BOXBLACKBOX));
-}
-
-static bool isFieldEnabled(FlightLogFieldSelect_e field)
-{
-    return (blackboxConfig()->fields & BIT(field));
-}
-
-static bool testBlackboxConditionUncached(FlightLogFieldCondition condition)
-{
-    switch (condition) {
-    case CONDITION(ALWAYS):
-        return true;
-
-    case CONDITION(COMMAND):
-        return isFieldEnabled(FIELD_SELECT(COMMAND));
-
-    case CONDITION(SETPOINT):
-        return isFieldEnabled(FIELD_SELECT(SETPOINT));
-
-    case CONDITION(MIXER):
-        return isFieldEnabled(FIELD_SELECT(MIXER));
-
-    case CONDITION(PID):
-        return isFieldEnabled(FIELD_SELECT(PID));
-
-    case CONDITION(BOOST):
-        return isFieldEnabled(FIELD_SELECT(PID)) &&
-            (currentPidProfile->pid[PID_PITCH].B > 0 ||
-             currentPidProfile->pid[PID_ROLL].B > 0 ||
-             currentPidProfile->pid[PID_YAW].B > 0);
-
-    case CONDITION(HSI):
-        return isFieldEnabled(FIELD_SELECT(PID)) &&
-            (currentPidProfile->pid[PID_PITCH].O > 0 ||
-             currentPidProfile->pid[PID_ROLL].O > 0);
-
-    case CONDITION(ATTITUDE):
-        return isFieldEnabled(FIELD_SELECT(ATTITUDE));
-
-    case CONDITION(GYRAW):
-        return isFieldEnabled(FIELD_SELECT(GYRAW));
-
-    case CONDITION(GYRO):
-        return isFieldEnabled(FIELD_SELECT(GYRO));
-
-    case CONDITION(ACC):
-        return sensors(SENSOR_ACC) && isFieldEnabled(FIELD_SELECT(ACC));
-
-    case CONDITION(MAG):
-#ifdef USE_MAG
-        return sensors(SENSOR_MAG) && isFieldEnabled(FIELD_SELECT(MAG));
-#else
-        return false;
-#endif
-
-    case CONDITION(ALT):
-#ifdef USE_BARO
-        return sensors(SENSOR_BARO) && isFieldEnabled(FIELD_SELECT(ALT));
-#else
-        return false;
-#endif
-
-    case CONDITION(HEADSPEED):
-        return (getMotorCount() >= 1) && isFieldEnabled(FIELD_SELECT(RPM));
-    case CONDITION(TAILSPEED):
-        return (getMotorCount() >= 2) && isFieldEnabled(FIELD_SELECT(RPM));
-    case CONDITION(GOVERNOR):
-        return (getMotorCount() >= 1) && isFieldEnabled(FIELD_SELECT(GOV));
-
-    case CONDITION(TMCU):
-        return isFieldEnabled(FIELD_SELECT(TEMP));
-    case CONDITION(TESC):
-        return featureIsEnabled(FEATURE_ESC_SENSOR) && (isFieldEnabled(FIELD_SELECT(TEMP)) || isFieldEnabled(FIELD_SELECT(ESC)));
-    case CONDITION(TESC2):
-        return featureIsEnabled(FEATURE_ESC_SENSOR) && isFieldEnabled(FIELD_SELECT(ESC2));
-
-    case CONDITION(ESC_TELEM):
-        return featureIsEnabled(FEATURE_ESC_SENSOR) && isFieldEnabled(FIELD_SELECT(ESC));
-    case CONDITION(BEC_TELEM):
-        return featureIsEnabled(FEATURE_ESC_SENSOR) && isFieldEnabled(FIELD_SELECT(BEC));
-    case CONDITION(ESC2_TELEM):
-        return featureIsEnabled(FEATURE_ESC_SENSOR) && isFieldEnabled(FIELD_SELECT(ESC2));
-
-    case CONDITION(MOTOR_1):
-        return (getMotorCount() >= 1) && isFieldEnabled(FIELD_SELECT(MOTOR));
-    case CONDITION(MOTOR_2):
-        return (getMotorCount() >= 2) && isFieldEnabled(FIELD_SELECT(MOTOR));
-    case CONDITION(MOTOR_3):
-        return (getMotorCount() >= 3) && isFieldEnabled(FIELD_SELECT(MOTOR));
-    case CONDITION(MOTOR_4):
-        return (getMotorCount() >= 4) && isFieldEnabled(FIELD_SELECT(MOTOR));
-
-    case CONDITION(SERVO_1):
-        return (getServoCount() >= 1) && isFieldEnabled(FIELD_SELECT(SERVO));
-    case CONDITION(SERVO_2):
-        return (getServoCount() >= 2) && isFieldEnabled(FIELD_SELECT(SERVO));
-    case CONDITION(SERVO_3):
-        return (getServoCount() >= 3) && isFieldEnabled(FIELD_SELECT(SERVO));
-    case CONDITION(SERVO_4):
-        return (getServoCount() >= 4) && isFieldEnabled(FIELD_SELECT(SERVO));
-    case CONDITION(SERVO_5):
-        return (getServoCount() >= 5) && isFieldEnabled(FIELD_SELECT(SERVO));
-    case CONDITION(SERVO_6):
-        return (getServoCount() >= 6) && isFieldEnabled(FIELD_SELECT(SERVO));
-    case CONDITION(SERVO_7):
-        return (getServoCount() >= 7) && isFieldEnabled(FIELD_SELECT(SERVO));
-    case CONDITION(SERVO_8):
-        return (getServoCount() >= 8) && isFieldEnabled(FIELD_SELECT(SERVO));
-
-    case CONDITION(RSSI):
-        return isRssiConfigured() && isFieldEnabled(FIELD_SELECT(RSSI));
-
-    case CONDITION(VOLTAGE):
-        return isBatteryVoltageConfigured() && isFieldEnabled(FIELD_SELECT(BATTERY));
-
-    case CONDITION(CURRENT):
-        return isBatteryCurrentConfigured() && isFieldEnabled(FIELD_SELECT(BATTERY));
-
-    case CONDITION(VBEC):
-        return adcIsEnabled(ADC_VBEC) && isFieldEnabled(FIELD_SELECT(VBEC));
-
-    case CONDITION(VBUS):
-        return adcIsEnabled(ADC_VBUS) && isFieldEnabled(FIELD_SELECT(VBUS));
-
-    case CONDITION(DEBUG):
-        return (debugMode != DEBUG_NONE);
-
-    case CONDITION(NOT_EVERY_FRAME):
-        return (blackboxPInterval > 1);
-
-    case CONDITION(NEVER):
-        return false;
-
-    default:
-        return false;
-    }
-}
-
-static void blackboxBuildConditionCache(void)
-{
-    blackboxConditionCache = 0;
-    for (int index = 0; index <  FLIGHT_LOG_FIELD_CONDITION_COUNT; index++) {
-        if (testBlackboxConditionUncached(index)) {
-            blackboxConditionCache |= BITLL(index);
-        }
-    }
-}
-
-static bool testBlackboxCondition(FlightLogFieldCondition condition)
-{
-    return (blackboxConditionCache & BITLL(condition));
 }
 
 static void blackboxSetState(BlackboxState newState)
@@ -1420,26 +1020,19 @@ static void loadMainState(timeUs_t currentTimeUs)
  * For all header types, provide a "mainFrameChar" which is the name for the field and will be used to refer to it in the
  * header (e.g. P, I etc). For blackboxDeltaField_t fields, also provide deltaFrameChar, otherwise set this to zero.
  *
- * Provide an array 'conditions' of FlightLogFieldCondition enums if you want these conditions to decide whether a field
- * should be included or not. Otherwise provide NULL for this parameter and NULL for secondCondition.
- *
  * Set xmitState.headerIndex to 0 and xmitState.u.fieldIndex to -1 before calling for the first time.
- *
- * secondFieldDefinition and secondCondition element pointers need to be provided in order to compute the stride of the
- * fieldDefinition and secondCondition arrays.
  *
  * Returns true if there is still header left to transmit (so call again to continue transmission).
  */
-static bool sendFieldDefinition(char mainFrameChar, char deltaFrameChar, const void *fieldDefinitions,
-        const void *secondFieldDefinition, int fieldCount, const uint8_t *conditions, const uint8_t *secondCondition)
+static bool sendFieldDefinition(char mainFrameChar, char deltaFrameChar, const blackboxFieldDefinitionSet_t *fieldSet)
 {
     const blackboxFieldDefinition_t *def;
     unsigned int headerCount;
     static bool needComma = false;
-    size_t definitionStride = (char*) secondFieldDefinition - (char*) fieldDefinitions;
-    size_t conditionsStride = (char*) secondCondition - (char*) conditions;
+    const char *fieldDefinitions = fieldSet->definitions;
+    const bool hasConditions = fieldSet->conditionOffset >= 0;
 
-    if (deltaFrameChar) {
+    if (fieldSet->isDelta) {
         headerCount = BLACKBOX_DELTA_FIELD_HEADER_COUNT;
     } else {
         headerCount = BLACKBOX_SIMPLE_FIELD_HEADER_COUNT;
@@ -1471,10 +1064,10 @@ static bool sendFieldDefinition(char mainFrameChar, char deltaFrameChar, const v
     // The longest we expect an integer to be as a string:
     const uint32_t LONGEST_INTEGER_STRLEN = 2;
 
-    for (; xmitState.u.fieldIndex < fieldCount; xmitState.u.fieldIndex++) {
-        def = (const blackboxFieldDefinition_t*) ((const char*)fieldDefinitions + definitionStride * xmitState.u.fieldIndex);
+    for (; xmitState.u.fieldIndex < fieldSet->fieldCount; xmitState.u.fieldIndex++) {
+        def = (const blackboxFieldDefinition_t *)(fieldDefinitions + fieldSet->definitionStride * xmitState.u.fieldIndex);
 
-        if (!conditions || testBlackboxCondition(conditions[conditionsStride * xmitState.u.fieldIndex])) {
+        if (!hasConditions || testBlackboxCondition(*(const uint8_t *)((const char *)def + fieldSet->conditionOffset))) {
             // First (over)estimate the length of the string we want to print
 
             int32_t bytesToWrite = 1; // Leading comma
@@ -1517,7 +1110,7 @@ static bool sendFieldDefinition(char mainFrameChar, char deltaFrameChar, const v
     }
 
     // Did we complete this line?
-    if (xmitState.u.fieldIndex == fieldCount && blackboxDeviceReserveBufferSpace(1) == BLACKBOX_RESERVE_SUCCESS) {
+    if (xmitState.u.fieldIndex == fieldSet->fieldCount && blackboxDeviceReserveBufferSpace(1) == BLACKBOX_RESERVE_SUCCESS) {
         blackboxHeaderBudget--;
         blackboxWrite('\n');
         xmitState.headerIndex++;
@@ -2092,8 +1685,7 @@ void blackboxUpdate(timeUs_t currentTimeUs)
     case BLACKBOX_STATE_SEND_MAIN_FIELD_HEADER:
         blackboxReplenishHeaderBudget();
         //On entry of this state, xmitState.headerIndex is 0 and xmitState.u.fieldIndex is -1
-        if (!sendFieldDefinition('I', 'P', blackboxMainFields, blackboxMainFields + 1, ARRAYLEN(blackboxMainFields),
-                &blackboxMainFields[0].condition, &blackboxMainFields[1].condition)) {
+        if (!sendFieldDefinition('I', 'P', &blackboxMainFieldSet)) {
 #ifdef USE_GPS
             if (featureIsEnabled(FEATURE_GPS) && isFieldEnabled(FIELD_SELECT(GPS))) {
                 blackboxSetState(BLACKBOX_STATE_SEND_GPS_H_HEADER);
@@ -2106,16 +1698,14 @@ void blackboxUpdate(timeUs_t currentTimeUs)
     case BLACKBOX_STATE_SEND_GPS_H_HEADER:
         blackboxReplenishHeaderBudget();
         //On entry of this state, xmitState.headerIndex is 0 and xmitState.u.fieldIndex is -1
-        if (!sendFieldDefinition('H', 0, blackboxGpsHFields, blackboxGpsHFields + 1, ARRAYLEN(blackboxGpsHFields),
-                NULL, NULL) && isFieldEnabled(FIELD_SELECT(GPS))) {
+        if (!sendFieldDefinition('H', 0, &blackboxGpsHFieldSet) && isFieldEnabled(FIELD_SELECT(GPS))) {
             blackboxSetState(BLACKBOX_STATE_SEND_GPS_G_HEADER);
         }
         break;
     case BLACKBOX_STATE_SEND_GPS_G_HEADER:
         blackboxReplenishHeaderBudget();
         //On entry of this state, xmitState.headerIndex is 0 and xmitState.u.fieldIndex is -1
-        if (!sendFieldDefinition('G', 0, blackboxGpsGFields, blackboxGpsGFields + 1, ARRAYLEN(blackboxGpsGFields),
-                &blackboxGpsGFields[0].condition, &blackboxGpsGFields[1].condition) && isFieldEnabled(FIELD_SELECT(GPS))) {
+        if (!sendFieldDefinition('G', 0, &blackboxGpsGFieldSet) && isFieldEnabled(FIELD_SELECT(GPS))) {
             blackboxSetState(BLACKBOX_STATE_SEND_SLOW_HEADER);
         }
         break;
@@ -2123,8 +1713,7 @@ void blackboxUpdate(timeUs_t currentTimeUs)
     case BLACKBOX_STATE_SEND_SLOW_HEADER:
         blackboxReplenishHeaderBudget();
         //On entry of this state, xmitState.headerIndex is 0 and xmitState.u.fieldIndex is -1
-        if (!sendFieldDefinition('S', 0, blackboxSlowFields, blackboxSlowFields + 1, ARRAYLEN(blackboxSlowFields),
-                NULL, NULL)) {
+        if (!sendFieldDefinition('S', 0, &blackboxSlowFieldSet)) {
             cacheFlushNextState = BLACKBOX_STATE_SEND_SYSINFO;
             blackboxSetState(BLACKBOX_STATE_CACHE_FLUSH);
         }

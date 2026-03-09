@@ -139,6 +139,8 @@ COMMON_SRC = \
             sensors/initialisation.c \
             blackbox/blackbox.c \
             blackbox/blackbox_encoding.c \
+            blackbox/blackbox_fielddefs.c \
+            blackbox/blackbox_internal.c \
             blackbox/blackbox_io.c \
             blackbox/blackbox_tlv.c \
             cms/cms.c \

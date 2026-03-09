@@ -20,6 +20,15 @@
 
 #pragma once
 
+#include "platform.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define CONDITION(x) CONCAT(FLIGHT_LOG_FIELD_CONDITION_, x)
+#define FIELD_SELECT(x) CONCAT(FLIGHT_LOG_FIELD_SELECT_, x)
+
+
 typedef enum FlightLogFieldCondition {
     FLIGHT_LOG_FIELD_CONDITION_ALWAYS = 0,
 
@@ -240,3 +249,73 @@ typedef struct flightLogEvent_s {
     FlightLogEvent event;
     flightLogEventData_t data;
 } flightLogEvent_t;
+
+extern const char* const blackboxFieldHeaderNames[];
+
+/* All field definition structs should look like this (but with longer arrs): */
+typedef struct blackboxFieldDefinition_s {
+    const char *name;
+    // If the field name has a number to be included in square brackets [1] afterwards, set it here, or -1 for no brackets:
+    int8_t fieldNameIndex;
+
+    // Each member of this array will be the value to print for this field for the given header index
+    uint8_t arr[1];
+} blackboxFieldDefinition_t;
+
+typedef enum blackboxFieldHeaderCount_e {
+    BLACKBOX_DELTA_FIELD_HEADER_COUNT = 6,
+    BLACKBOX_SIMPLE_FIELD_HEADER_COUNT = BLACKBOX_DELTA_FIELD_HEADER_COUNT - 2,
+    BLACKBOX_CONDITIONAL_FIELD_HEADER_COUNT = BLACKBOX_DELTA_FIELD_HEADER_COUNT - 2
+} blackboxFieldHeaderCount_e;
+
+typedef struct blackboxSimpleFieldDefinition_s {
+    const char *name;
+    int8_t fieldNameIndex;
+
+    uint8_t isSigned;
+    uint8_t predict;
+    uint8_t encode;
+} blackboxSimpleFieldDefinition_t;
+
+typedef struct blackboxConditionalFieldDefinition_s {
+    const char *name;
+    int8_t fieldNameIndex;
+
+    uint8_t isSigned;
+    uint8_t predict;
+    uint8_t encode;
+    uint8_t condition; // Decide whether this field should appear in the log
+} blackboxConditionalFieldDefinition_t;
+
+typedef struct blackboxDeltaFieldDefinition_s {
+    const char *name;
+    int8_t fieldNameIndex;
+
+    uint8_t isSigned;
+    uint8_t Ipredict;
+    uint8_t Iencode;
+    uint8_t Ppredict;
+    uint8_t Pencode;
+    uint8_t condition; // Decide whether this field should appear in the log
+} blackboxDeltaFieldDefinition_t;
+
+typedef struct blackboxFieldDefinitionSet_s {
+    const void *definitions;
+    uint16_t fieldCount;
+    uint8_t definitionStride;
+    int16_t conditionOffset; // -1 when the field definitions are unconditional
+    bool isDelta;
+} blackboxFieldDefinitionSet_t;
+
+extern const blackboxFieldDefinitionSet_t blackboxMainFieldSet;
+
+#ifdef USE_GPS
+// GPS position/vel frame
+extern const blackboxFieldDefinitionSet_t blackboxGpsGFieldSet;
+
+// GPS home frame
+extern const blackboxFieldDefinitionSet_t blackboxGpsHFieldSet;
+#endif
+
+// Rarely-updated fields
+extern const blackboxFieldDefinitionSet_t blackboxSlowFieldSet;

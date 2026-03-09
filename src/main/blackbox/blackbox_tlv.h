@@ -23,6 +23,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "blackbox_fielddefs.h"
+
 // TODO some more documentation how it works etc
 
 // TLV Header Format:
@@ -32,7 +34,7 @@
 
 // TLV Tag Definitions for Blackbox Headers
 typedef enum {
-        BB_TLV_TAG_PRODUCT_NAME         = 0x01,
+        BB_TLV_TAG_PRODUCT_NAME = 0x01,
 } blackboxTlvTag_e;
 
 // TLV value type encodings

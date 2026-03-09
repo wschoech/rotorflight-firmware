@@ -42,8 +42,6 @@ typedef struct xmitState {
     } u;
 } xmitState_t;
 
-extern xmitState_t xmitState;
-
 void blackboxLogEvent(FlightLogEvent event, flightLogEventData_t *data);
 
 void blackboxLogCustomData(const uint8_t *ptr, size_t length);
