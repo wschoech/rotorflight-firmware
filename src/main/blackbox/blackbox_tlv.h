@@ -35,7 +35,8 @@
 // TLV Tag Definitions for Blackbox Headers
 typedef enum {
         BB_TLV_TAG_PRODUCT_NAME = 0x01,
-        BB_TLV_TAG_MAIN_FIELD_DEFINITIONS = 0x02,
+
+        BB_TLV_TAG_FIELD_DEF_MAIN = 0x20,
 } blackboxTlvTag_e;
 
 // TLV value type encodings

@@ -1685,7 +1685,7 @@ void blackboxUpdate(timeUs_t currentTimeUs)
     case BLACKBOX_STATE_SEND_MAIN_FIELD_HEADER:
         blackboxReplenishHeaderBudget();
         //On entry of this state, xmitState.headerIndex is 0 and xmitState.u.fieldIndex is -1
-        if (!sendFieldDefinition('I', 'P', &blackboxMainFieldSet)) {
+        if (!blackboxTlvWriteFieldDefinitions(BB_TLV_TAG_FIELD_DEF_MAIN, &blackboxMainFieldSet)) {
 #ifdef USE_GPS
             if (featureIsEnabled(FEATURE_GPS) && isFieldEnabled(FIELD_SELECT(GPS))) {
                 blackboxSetState(BLACKBOX_STATE_SEND_GPS_H_HEADER);
