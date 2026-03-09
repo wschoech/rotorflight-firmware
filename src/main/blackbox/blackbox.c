@@ -1698,14 +1698,14 @@ void blackboxUpdate(timeUs_t currentTimeUs)
     case BLACKBOX_STATE_SEND_GPS_H_HEADER:
         blackboxReplenishHeaderBudget();
         //On entry of this state, xmitState.headerIndex is 0 and xmitState.u.fieldIndex is -1
-        if (!sendFieldDefinition('H', 0, &blackboxGpsHFieldSet) && isFieldEnabled(FIELD_SELECT(GPS))) {
+        if (!blackboxTlvWriteFieldDefinitions(BB_TLV_TAG_FIELD_DEF_GPS_H, &blackboxGpsHFieldSet) && isFieldEnabled(FIELD_SELECT(GPS))) {
             blackboxSetState(BLACKBOX_STATE_SEND_GPS_G_HEADER);
         }
         break;
     case BLACKBOX_STATE_SEND_GPS_G_HEADER:
         blackboxReplenishHeaderBudget();
         //On entry of this state, xmitState.headerIndex is 0 and xmitState.u.fieldIndex is -1
-        if (!sendFieldDefinition('G', 0, &blackboxGpsGFieldSet) && isFieldEnabled(FIELD_SELECT(GPS))) {
+        if (!blackboxTlvWriteFieldDefinitions(BB_TLV_TAG_FIELD_DEF_GPS_G, &blackboxGpsGFieldSet) && isFieldEnabled(FIELD_SELECT(GPS))) {
             blackboxSetState(BLACKBOX_STATE_SEND_SLOW_HEADER);
         }
         break;
@@ -1713,7 +1713,7 @@ void blackboxUpdate(timeUs_t currentTimeUs)
     case BLACKBOX_STATE_SEND_SLOW_HEADER:
         blackboxReplenishHeaderBudget();
         //On entry of this state, xmitState.headerIndex is 0 and xmitState.u.fieldIndex is -1
-        if (!sendFieldDefinition('S', 0, &blackboxSlowFieldSet)) {
+        if (!blackboxTlvWriteFieldDefinitions(BB_TLV_TAG_FIELD_DEF_SLOW, &blackboxSlowFieldSet)) {
             cacheFlushNextState = BLACKBOX_STATE_SEND_SYSINFO;
             blackboxSetState(BLACKBOX_STATE_CACHE_FLUSH);
         }

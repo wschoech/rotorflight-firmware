@@ -37,6 +37,10 @@ typedef enum {
         BB_TLV_TAG_PRODUCT_NAME = 0x01,
 
         BB_TLV_TAG_FIELD_DEF_MAIN = 0x20,
+        BB_TLV_TAG_FIELD_DEF_GPS_H = 0x21,
+        BB_TLV_TAG_FIELD_DEF_GPS_G = 0x22,
+        BB_TLV_TAG_FIELD_DEF_SLOW  = 0x23,
+
 } blackboxTlvTag_e;
 
 // TLV value type encodings
