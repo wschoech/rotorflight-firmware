@@ -111,3 +111,82 @@ void blackboxTlvWriteString(blackboxTlvTag_e tag, const char* str)
     writeTlvHeader(tag, length);
     blackboxWriteString(str);   // TODO optimize by writing directly to blackbox instead of first calculating length and then strlen again in blackboxWriteString?
 }
+
+bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldDefinitionSet_t *fieldSet)
+{
+    const char *fieldDefinitions = fieldSet->definitions;
+    const bool hasConditions = fieldSet->conditionOffset >= 0;
+
+    // On first call, calculate total payload size
+    if (xmitState.u.fieldIndex == -1) {
+        uint32_t payloadSize = 0;
+
+        for (unsigned i = 0; i < fieldSet->fieldCount; i++) {
+            const blackboxFieldDefinition_t *def = (const blackboxFieldDefinition_t *)(fieldDefinitions + fieldSet->definitionStride * i);
+
+            if (!hasConditions || testBlackboxCondition(*(const uint8_t *)((const char *)def + fieldSet->conditionOffset))) {
+                const size_t nameLength = strlen(def->name);
+
+                payloadSize += nameLength + 1; // name + null terminator
+                payloadSize += 1; // fieldNameIndex
+                payloadSize += 1; // signed flag
+                payloadSize += 1; // I predictor / SFrame predict
+                payloadSize += 1; // I encoding / SFrame encode
+                if (fieldSet->isDelta) {
+                    payloadSize += 1; // P predictor
+                    payloadSize += 1; // P encoding
+                }
+            }
+        }
+
+        // Write TLV header
+        uint32_t headerSize = TLV_TAG_SIZE_IN_BYTES + TLV_SIZE_SIZE_IN_BYTES;
+        if (!reserveTlvSpace(headerSize)) {
+            return true; // Try again later
+        }
+
+        writeTlvHeader(tag, payloadSize);
+        xmitState.u.fieldIndex = 0;
+    }
+
+    // Write field definitions in chunks
+    const int FIELDS_PER_ITERATION = 5;
+    int fieldsWritten = 0;
+
+    for (; xmitState.u.fieldIndex < fieldSet->fieldCount && fieldsWritten < FIELDS_PER_ITERATION; xmitState.u.fieldIndex++) {
+        const blackboxFieldDefinition_t *fieldDef = (const blackboxFieldDefinition_t *)(fieldDefinitions + fieldSet->definitionStride * xmitState.u.fieldIndex);
+
+        if (!hasConditions || testBlackboxCondition(*(const uint8_t *)((const char *)fieldDef + fieldSet->conditionOffset))) {
+            const size_t nameLength = strlen(fieldDef->name);
+            uint32_t fieldSize = nameLength + 1 + 1 + 1 + 1 + 1 + (fieldSet->isDelta ? 2 : 0);
+
+            if (!reserveTlvSpace(fieldSize)) {
+                return true; // Try again later
+            }
+
+            // Write name (null-terminated)
+            const char* name = fieldDef->name;
+            while (*name) {
+                blackboxWrite(*name++);
+            }
+            blackboxWrite(0); // null terminator
+
+            // Write field metadata
+            blackboxWrite((uint8_t)fieldDef->fieldNameIndex);
+            blackboxWrite(fieldDef->arr[0]);
+            blackboxWrite(fieldDef->arr[1]);
+            blackboxWrite(fieldDef->arr[2]);
+
+            if (fieldSet->isDelta) {
+                blackboxWrite(fieldDef->arr[3]);
+                blackboxWrite(fieldDef->arr[4]);
+            }
+
+            fieldsWritten++;
+        }
+    }
+
+    // Check if we've finished all fields
+    return xmitState.u.fieldIndex < fieldSet->fieldCount;
+}
+

@@ -35,6 +35,7 @@
 // TLV Tag Definitions for Blackbox Headers
 typedef enum {
         BB_TLV_TAG_PRODUCT_NAME = 0x01,
+        BB_TLV_TAG_MAIN_FIELD_DEFINITIONS = 0x02,
 } blackboxTlvTag_e;
 
 // TLV value type encodings
@@ -55,3 +56,4 @@ void blackboxTlvWriteI8(blackboxTlvTag_e tag, int8_t value);
 void blackboxTlvWriteI16(blackboxTlvTag_e tag, int16_t value);
 void blackboxTlvWriteI32(blackboxTlvTag_e tag, int32_t value);
 void blackboxTlvWriteString(blackboxTlvTag_e tag, const char *str);
+bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldDefinitionSet_t *fieldSet);
