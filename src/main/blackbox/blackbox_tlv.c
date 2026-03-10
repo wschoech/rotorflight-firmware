@@ -24,6 +24,8 @@
 #include "blackbox_io.h"
 #include "blackbox_tlv.h"
 
+#include "common/printf.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -192,5 +194,28 @@ bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldD
 
 bool blackboxWriteSysinfo(void)
 {
-    return true;
+    char buf[128];
+
+    switch (xmitState.headerIndex) {
+        case 0:
+            blackboxTlvWriteString(BB_TLV_TAG_FIRMWARE_TYPE, "Rotorflight");
+            break;
+        case 1:
+            tfp_sprintf(buf, "%s %s (%s) %s", FC_FIRMWARE_NAME, FC_VERSION_STRING, shortGitRevision, targetName);
+            blackboxTlvWriteString(BB_TLV_TAG_FIRMWARE_REVISION, buf);
+            break;
+        case 2:
+            tfp_sprintf(buf, "%s %s", buildDate, buildTime);
+            blackboxTlvWriteString(BB_TLV_TAG_FIRMWARE_DATE, buf);
+            break;
+        default:
+        // All done
+            return true;
+    }
+
+    ++xmitState.headerIndex;
+
+    // Not done yet, return false
+    return false;
+}
 }

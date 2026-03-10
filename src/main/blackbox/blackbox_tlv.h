@@ -34,7 +34,10 @@
 
 // TLV Tag Definitions for Blackbox Headers
 typedef enum {
-        BB_TLV_TAG_PRODUCT_NAME = 0x01,
+        BB_TLV_TAG_FIRMWARE_TYPE = 0x01,
+        BB_TLV_TAG_FIRMWARE_REVISION = 0x02,
+        BB_TLV_TAG_FIRMWARE_DATE = 0x03,
+
 
         BB_TLV_TAG_FIELD_DEF_MAIN = 0x20,
         BB_TLV_TAG_FIELD_DEF_GPS_H = 0x21,
