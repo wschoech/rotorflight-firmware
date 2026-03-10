@@ -190,3 +190,7 @@ bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldD
     return xmitState.u.fieldIndex < fieldSet->fieldCount;
 }
 
+bool blackboxWriteSysinfo(void)
+{
+    return true;
+}

@@ -62,3 +62,5 @@ void blackboxTlvWriteI16(blackboxTlvTag_e tag, int16_t value);
 void blackboxTlvWriteI32(blackboxTlvTag_e tag, int32_t value);
 void blackboxTlvWriteString(blackboxTlvTag_e tag, const char *str);
 bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldDefinitionSet_t *fieldSet);
+
+bool blackboxWriteSysinfo(void);
