@@ -256,15 +256,12 @@ bool blackboxMayEditConfig(void)
 
 static bool blackboxIsLoggingEnabled(void)
 {
-    return (blackboxConfig()->device && (
-        (blackboxConfig()->mode == BLACKBOX_MODE_NORMAL && ARMING_FLAG(ARMED) && (IS_RC_MODE_ACTIVE(BOXBLACKBOX) || blackboxStarted)) ||
-        (blackboxConfig()->mode == BLACKBOX_MODE_ARMED && ARMING_FLAG(ARMED)) ||
-        (blackboxConfig()->mode == BLACKBOX_MODE_SWITCH && IS_RC_MODE_ACTIVE(BOXBLACKBOX))));
+    return blackboxConfig()->device;
 }
 
 static bool blackboxIsLoggingPaused(void)
 {
-    return (blackboxConfig()->mode == BLACKBOX_MODE_NORMAL && !IS_RC_MODE_ACTIVE(BOXBLACKBOX));
+    return false;
 }
 
 static void blackboxSetState(BlackboxState newState)
@@ -813,12 +810,6 @@ void blackboxCheckEnabler(timeUs_t currentTimeUs)
             // Busy erasing
             break;
         case BLACKBOX_STATE_RUNNING:
-            if (blackboxConfig()->mode == BLACKBOX_MODE_SWITCH) {
-                // `BLACKBOX_STATE_PAUSED` with logging disabled is equivalent
-                // to stopping without grace period.
-                blackboxSetState(BLACKBOX_STATE_PAUSED);
-                break;
-            }
             gracePeriodEnd =
                 currentTimeUs + blackboxConfig()->gracePeriod * 1000000;
             blackboxSetState(BLACKBOX_STATE_GRACE_PERIOD);
