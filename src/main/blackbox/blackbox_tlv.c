@@ -114,6 +114,14 @@ void blackboxTlvWriteString(blackboxTlvTag_e tag, const char* str)
     blackboxWriteString(str);   // TODO optimize by writing directly to blackbox instead of first calculating length and then strlen again in blackboxWriteString?
 }
 
+void blackboxTlvWriteEndMarker(void)
+{
+    if (!reserveTlvSpace(TLV_HEADER_SIZE))
+        return;
+
+    writeTlvHeader(BB_TLV_TAG_END_OF_HEADERS, 0);
+}
+
 bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldDefinitionSet_t *fieldSet)
 {
     const char *fieldDefinitions = fieldSet->definitions;

@@ -1357,6 +1357,8 @@ void blackboxUpdate(timeUs_t currentTimeUs)
 
         //Keep writing chunks of the system info headers until it returns true to signal completion
         if (blackboxWriteSysinfo()) {
+            blackboxTlvWriteEndMarker();    // All headers logged, write end-of-headers marker
+
             /*
              * Wait for header buffers to drain completely before data logging begins to ensure reliable header delivery
              * (overflowing circular buffers causes all data to be discarded, so the first few logged iterations

@@ -44,6 +44,8 @@ typedef enum {
         BB_TLV_TAG_FIELD_DEF_GPS_G = 0x22,
         BB_TLV_TAG_FIELD_DEF_SLOW  = 0x23,
 
+        BB_TLV_TAG_END_OF_HEADERS = 0xFFFF,
+
 } blackboxTlvTag_e;
 
 // TLV value type encodings
@@ -64,6 +66,8 @@ void blackboxTlvWriteI8(blackboxTlvTag_e tag, int8_t value);
 void blackboxTlvWriteI16(blackboxTlvTag_e tag, int16_t value);
 void blackboxTlvWriteI32(blackboxTlvTag_e tag, int32_t value);
 void blackboxTlvWriteString(blackboxTlvTag_e tag, const char *str);
+
+void blackboxTlvWriteEndMarker(void);
 bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldDefinitionSet_t *fieldSet);
 
 bool blackboxWriteSysinfo(void);
