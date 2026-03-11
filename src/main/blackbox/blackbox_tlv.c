@@ -26,6 +26,10 @@
 
 #include "common/printf.h"
 
+#include "fc/board_info.h"
+
+#include "pg/pilot.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -216,6 +220,33 @@ bool blackboxWriteSysinfo(void)
             tfp_sprintf(buf, "%s %s", buildDate, buildTime);
             blackboxTlvWriteString(BB_TLV_TAG_FIRMWARE_DATE, buf);
             break;
+#ifdef USE_BOARD_INFO
+        case 3: {
+            tfp_sprintf(buf, "%s %s", getManufacturerId(), getBoardName());
+            blackboxTlvWriteString(BB_TLV_TAG_BOARD_INFO, buf);
+            break;
+        }
+#else
+        case 3:
+            break;
+#endif
+        case 4: {
+            // Get start datetime
+            char *datetime;
+#ifdef USE_RTC_TIME
+            dateTime_t dt;
+            rtcGetDateTime(&dt);
+            dateTimeFormatLocal(buf, &dt);
+            datetime = buf;
+#else
+            datetime = "0000-01-01T00:00:00.000";
+#endif
+            blackboxTlvWriteString(BB_TLV_TAG_LOG_START_DATETIME, datetime);
+            break;
+        }
+        case 5:
+            blackboxTlvWriteString(BB_TLV_TAG_CRAFT_NAME, pilotConfig()->name);
+            break;           
         default:
         // All done
             return true;
