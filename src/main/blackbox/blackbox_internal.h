@@ -26,6 +26,10 @@
 #include "blackbox.h"
 
 extern xmitState_t xmitState;
+extern uint32_t blackboxPInterval;
+extern uint32_t blackboxIInterval;
+extern uint32_t blackboxSInterval;
+extern uint32_t blackboxGInterval;
 
 uint8_t blackboxGetRateDenom(void);
 

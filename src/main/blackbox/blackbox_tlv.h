@@ -47,6 +47,10 @@ typedef enum {
     BB_TLV_TAG_FIELD_DEF_GPS_G = 0x22,
     BB_TLV_TAG_FIELD_DEF_SLOW = 0x23,
 
+    BB_TLV_TAG_I_INTERVAL           = 0x10,
+    BB_TLV_TAG_P_INTERVAL           = 0x11,
+    BB_TLV_TAG_P_RATIO              = 0x12,
+
     BB_TLV_TAG_END_OF_HEADERS = 0xFFFF,
 } blackboxTlvTag_e;
 

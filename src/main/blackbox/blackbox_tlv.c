@@ -261,6 +261,15 @@ bool blackboxWriteSysinfo(void)
         case 5:
             blackboxTlvWriteString(BB_TLV_TAG_CRAFT_NAME, pilotConfig()->name);
             break;
+        case 6:
+            blackboxTlvWriteU32(BB_TLV_TAG_I_INTERVAL, blackboxIInterval);
+            break;
+        case 7:
+            blackboxTlvWriteU32(BB_TLV_TAG_P_INTERVAL, blackboxPInterval);
+            break;
+        case 8:
+            blackboxTlvWriteU32(BB_TLV_TAG_P_RATIO, blackboxIInterval / blackboxPInterval);
+            break;
         default:
         // All done
             return true;

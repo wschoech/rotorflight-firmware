@@ -219,10 +219,10 @@ xmitState_t xmitState;
 
 static uint32_t blackboxIteration;
 
-static uint32_t blackboxPInterval = 0;
-static uint32_t blackboxIInterval = 0;
-static uint32_t blackboxSInterval = 0;
-static uint32_t blackboxGInterval = 0;
+uint32_t blackboxPInterval = 0;
+uint32_t blackboxIInterval = 0;
+uint32_t blackboxSInterval = 0;
+uint32_t blackboxGInterval = 0;
 
 static uint32_t blackboxSlowFrameSkipCounter;
 static uint32_t blackboxGPSHomeFrameSkipCounter;
