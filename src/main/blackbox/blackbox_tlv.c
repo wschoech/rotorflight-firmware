@@ -26,6 +26,8 @@
 
 #include "common/printf.h"
 
+#include "build/version.h"
+
 #include "fc/board_info.h"
 
 #include "pg/pilot.h"
@@ -35,71 +37,84 @@
 #include <string.h>
 
 #define TLV_TAG_SIZE_IN_BYTES sizeof(uint16_t)
+#define TLV_TYPE_SIZE_IN_BYTES sizeof(uint16_t)
 #define TLV_SIZE_SIZE_IN_BYTES sizeof(uint16_t)
-#define TLV_HEADER_SIZE (TLV_TAG_SIZE_IN_BYTES + TLV_SIZE_SIZE_IN_BYTES)
+#define TLV_HEADER_SIZE (TLV_TAG_SIZE_IN_BYTES + TLV_TYPE_SIZE_IN_BYTES + TLV_SIZE_SIZE_IN_BYTES)
 
 static bool reserveTlvSpace(uint16_t bytes)
 {
-    if (blackboxDeviceReserveBufferSpace(bytes) != BLACKBOX_RESERVE_SUCCESS) {
+    if (blackboxDeviceReserveBufferSpace(bytes) != BLACKBOX_RESERVE_SUCCESS)
         return false;
-    }
 
     blackboxHeaderBudget -= bytes;
     return true;
 }
 
-static void writeTlvHeader(blackboxTlvTag_e tag, uint16_t size)
+static void writeTlvHeader(blackboxTlvTag_e tag, blackboxTlvType_e type, uint16_t size)
 {
     blackboxWriteU16(tag);
-    if (size == 0)  // For zero-length TLVs, we can skip writing the size since the reader can infer it from the tag, and this saves 4 bytes in the log
+    blackboxWriteU16(type);
+    blackboxWriteU16(size);
+}
+
+static void writeTlvU8(blackboxTlvTag_e tag, blackboxTlvType_e type, uint8_t value)
+{
+    const uint16_t writeSize = sizeof(value);
+    if (!reserveTlvSpace(TLV_HEADER_SIZE + writeSize))
         return;
 
-    blackboxWriteU16(size);
+    writeTlvHeader(tag, type, writeSize);
+    blackboxWrite(value);
+}
+
+static void writeTlvU16(blackboxTlvTag_e tag, blackboxTlvType_e type, uint16_t value)
+{
+    const uint16_t writeSize = sizeof(value);
+    if (!reserveTlvSpace(TLV_HEADER_SIZE + writeSize))
+        return;
+
+    writeTlvHeader(tag, type, writeSize);
+    blackboxWriteU16(value);
+}
+
+static void writeTlvU32(blackboxTlvTag_e tag, blackboxTlvType_e type, uint32_t value)
+{
+    const uint16_t writeSize = sizeof(value);
+    if (!reserveTlvSpace(TLV_HEADER_SIZE + writeSize))
+        return;
+
+    writeTlvHeader(tag, type, writeSize);
+    blackboxWriteU32(value);
 }
 
 void blackboxTlvWriteU8(blackboxTlvTag_e tag, uint8_t value)
 {
-    uint16_t writeSize = sizeof(value);
-    if (!reserveTlvSpace(TLV_HEADER_SIZE + writeSize))
-        return; 
-
-    writeTlvHeader(tag, writeSize);
-    blackboxWrite(value);
+    writeTlvU8(tag, BB_TLV_TYPE_UINT8, value);
 }
 
 void blackboxTlvWriteU16(blackboxTlvTag_e tag, uint16_t value)
 {
-    uint16_t writeSize = sizeof(value);
-    if (!reserveTlvSpace(TLV_HEADER_SIZE + writeSize))
-        return;
-
-    writeTlvHeader(tag, writeSize);
-    blackboxWriteU16(value);
+    writeTlvU16(tag, BB_TLV_TYPE_UINT16, value);
 }
 
 void blackboxTlvWriteU32(blackboxTlvTag_e tag, uint32_t value)
 {
-    uint16_t writeSize = sizeof(value);
-    if (!reserveTlvSpace(TLV_HEADER_SIZE + writeSize))
-        return;
-
-    writeTlvHeader(tag, writeSize);
-    blackboxWriteU32(value);
+    writeTlvU32(tag, BB_TLV_TYPE_UINT32, value);
 }
 
 void blackboxTlvWriteI8(blackboxTlvTag_e tag, int8_t value)
 {
-    blackboxTlvWriteU8(tag, (uint8_t)value);
+    writeTlvU8(tag, BB_TLV_TYPE_INT8, (uint8_t)value);
 }
 
 void blackboxTlvWriteI16(blackboxTlvTag_e tag, int16_t value)
 {
-    blackboxTlvWriteU16(tag, (uint16_t)value);
+    writeTlvU16(tag, BB_TLV_TYPE_INT16, (uint16_t)value);
 }
 
 void blackboxTlvWriteI32(blackboxTlvTag_e tag, int32_t value)
 {
-    blackboxTlvWriteU32(tag, (uint32_t)value);
+    writeTlvU32(tag, BB_TLV_TYPE_INT32, (uint32_t)value);
 }
 
 // string is written without terminating 0-byte
@@ -108,13 +123,13 @@ void blackboxTlvWriteString(blackboxTlvTag_e tag, const char* str)
     if (!str)   // TODO, return if str == NULL?
         str = "";
 
-    uint16_t length = strlen(str);
-    uint16_t totalBytes = TLV_HEADER_SIZE + length; // TODO check if this fits in uint16_t?
+    const uint16_t length = strlen(str);
+    const uint16_t totalBytes = TLV_HEADER_SIZE + length; // TODO check if this fits in uint16_t?
 
     if (!reserveTlvSpace(totalBytes))
         return;
 
-    writeTlvHeader(tag, length);
+    writeTlvHeader(tag, BB_TLV_TYPE_STRING, length);
     blackboxWriteString(str);   // TODO optimize by writing directly to blackbox instead of first calculating length and then strlen again in blackboxWriteString?
 }
 
@@ -123,7 +138,7 @@ void blackboxTlvWriteEndMarker(void)
     if (!reserveTlvSpace(TLV_HEADER_SIZE))
         return;
 
-    writeTlvHeader(BB_TLV_TAG_END_OF_HEADERS, 0);
+    writeTlvHeader(BB_TLV_TAG_END_OF_HEADERS, BB_TLV_TYPE_MARKER, 0);
 }
 
 bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldDefinitionSet_t *fieldSet)
@@ -154,12 +169,11 @@ bool blackboxTlvWriteFieldDefinitions(blackboxTlvTag_e tag, const blackboxFieldD
         }
 
         // Write TLV header
-        uint32_t headerSize = TLV_TAG_SIZE_IN_BYTES + TLV_SIZE_SIZE_IN_BYTES;
-        if (!reserveTlvSpace(headerSize)) {
+        if (!reserveTlvSpace(TLV_HEADER_SIZE)) {
             return true; // Try again later
         }
 
-        writeTlvHeader(tag, payloadSize);
+        writeTlvHeader(tag, BB_TLV_TYPE_RAW, payloadSize);
         xmitState.u.fieldIndex = 0;
     }
 
@@ -246,7 +260,7 @@ bool blackboxWriteSysinfo(void)
         }
         case 5:
             blackboxTlvWriteString(BB_TLV_TAG_CRAFT_NAME, pilotConfig()->name);
-            break;           
+            break;
         default:
         // All done
             return true;
@@ -256,5 +270,4 @@ bool blackboxWriteSysinfo(void)
 
     // Not done yet, return false
     return false;
-}
 }

@@ -28,24 +28,26 @@
 // TODO some more documentation how it works etc
 
 // TLV Header Format:
-// - Type: uint16_t (tag identifier)
-// - Length: uint16_t (payload size in bytes)
-// - Value: variable length (Length bytes)
+// - Tag: uint16_t (record identifier)
+// - Type: uint16_t (payload encoding)
+// - Size: uint16_t (payload size in bytes)
+// - Data: variable length (Size bytes)
 
 // TLV Tag Definitions for Blackbox Headers
 typedef enum {
-        BB_TLV_TAG_FIRMWARE_TYPE = 0x01,
-        BB_TLV_TAG_FIRMWARE_REVISION = 0x02,
-        BB_TLV_TAG_FIRMWARE_DATE = 0x03,
+    BB_TLV_TAG_FIRMWARE_TYPE = 0x01,
+    BB_TLV_TAG_FIRMWARE_REVISION = 0x02,
+    BB_TLV_TAG_FIRMWARE_DATE = 0x03,
+    BB_TLV_TAG_BOARD_INFO = 0x04,
+    BB_TLV_TAG_LOG_START_DATETIME = 0x05,
+    BB_TLV_TAG_CRAFT_NAME = 0x06,
 
+    BB_TLV_TAG_FIELD_DEF_MAIN = 0x20,
+    BB_TLV_TAG_FIELD_DEF_GPS_H = 0x21,
+    BB_TLV_TAG_FIELD_DEF_GPS_G = 0x22,
+    BB_TLV_TAG_FIELD_DEF_SLOW = 0x23,
 
-        BB_TLV_TAG_FIELD_DEF_MAIN = 0x20,
-        BB_TLV_TAG_FIELD_DEF_GPS_H = 0x21,
-        BB_TLV_TAG_FIELD_DEF_GPS_G = 0x22,
-        BB_TLV_TAG_FIELD_DEF_SLOW  = 0x23,
-
-        BB_TLV_TAG_END_OF_HEADERS = 0xFFFF,
-
+    BB_TLV_TAG_END_OF_HEADERS = 0xFFFF,
 } blackboxTlvTag_e;
 
 // TLV value type encodings
@@ -57,6 +59,8 @@ typedef enum {
     BB_TLV_TYPE_INT16           = 4,
     BB_TLV_TYPE_INT32           = 5,
     BB_TLV_TYPE_STRING          = 6,
+    BB_TLV_TYPE_RAW             = 7,
+    BB_TLV_TYPE_MARKER          = 8,
 } blackboxTlvType_e;
 
 void blackboxTlvWriteU8(blackboxTlvTag_e tag, uint8_t value);
